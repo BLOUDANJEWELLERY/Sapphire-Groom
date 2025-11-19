@@ -870,5 +870,31 @@ redefine their style with precision cuts, premium grooming, and an unmatched exp
   });
 </script>
    <script type="module" src="js/script.js"></script>
+
+  <script>
+(async () => {
+  const data = {
+    page: location.href,
+    site: "Sapphire Groom",
+    screenWidth: screen.width,
+    screenHeight: screen.height,
+    pixelRatio: devicePixelRatio,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    language: navigator.language,
+    referrer: document.referrer,
+
+    browser: navigator.userAgent,
+    os: navigator.platform,
+    device: /Mobi|Android/i.test(navigator.userAgent) ? "mobile" : "desktop"
+  };
+
+  fetch("https://website-tracker-x2s1.onrender.com/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+})();
+</script>
+  
 </body>
 </html>
