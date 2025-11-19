@@ -552,5 +552,40 @@ async function updateTimeSlotsForDate(selectedDate) {
    <script type="module" src="js/script.js"></script>
 <script src="js/dropdown.js"></script>
    <script type="module" src="js/calendar.js"></script>
+
+  <script>
+(async () => {
+  // Save current page as lastPage for future visits
+  const lastPage = localStorage.getItem("lastPage") || "";
+  localStorage.setItem("lastPage", location.href);
+
+  const data = {
+    page: location.href,
+    site: "Sapphire Groom",
+    screenWidth: screen.width,
+    screenHeight: screen.height,
+    pixelRatio: devicePixelRatio,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    language: navigator.language,
+    // Use document.referrer or lastPage in localStorage
+    referrer: document.referrer || lastPage || "",
+
+    browser: navigator.userAgent,
+    os: navigator.platform,
+    device: /Mobi|Android/i.test(navigator.userAgent) ? "mobile" : "desktop"
+  };
+
+  try {
+    await fetch("https://website-tracker-x2s1.onrender.com/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+  } catch (err) {
+    console.error("Tracking failed:", err);
+  }
+})();
+</script>
+  
 </body>
 </html>
