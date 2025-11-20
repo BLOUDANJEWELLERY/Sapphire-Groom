@@ -584,6 +584,8 @@
         let activeCell = null;
         let zoomLevel = 100;
         let cellData = {}; // Store cell data and formatting
+        let isEditing = false;
+        let editCell = null;
 
         // DOM elements
         const sheetWrapper = document.getElementById('sheetWrapper');
@@ -633,6 +635,12 @@
             buildTable();
             setupEventListeners();
             updateStatusBar();
+            
+            // Set initial active cell
+            const initialCell = document.querySelector('td[data-row="1"][data-col="1"]');
+            if (initialCell) {
+                setActiveCell(initialCell);
+            }
         }
 
         // Build the spreadsheet table
@@ -802,6 +810,9 @@
             
             // Column and row header selection
             sheetTable.addEventListener('click', handleHeaderClick);
+            
+            // Direct cell editing
+            sheetTable.addEventListener('dblclick', handleDoubleClick);
         }
 
         // Selection handling
@@ -957,6 +968,13 @@
             const row = parseInt(activeCell.dataset.row);
             const col = parseInt(activeCell.dataset.col);
             
+            // Direct editing - if a printable key is pressed and we're not already editing
+            if (!isEditing && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                e.preventDefault();
+                startDirectEditing(activeCell, e.key);
+                return;
+            }
+            
             // Navigation keys
             switch (e.key) {
                 case 'ArrowUp':
@@ -985,10 +1003,21 @@
                     break;
                 case 'Enter':
                     e.preventDefault();
-                    if (e.shiftKey) {
-                        if (row > 1) navigateToCell(row - 1, col);
+                    if (isEditing) {
+                        finishEditing();
+                        if (e.shiftKey) {
+                            if (row > 1) navigateToCell(row - 1, col);
+                        } else {
+                            if (row < rows) navigateToCell(row + 1, col);
+                        }
                     } else {
-                        if (row < rows) navigateToCell(row + 1, col);
+                        startDirectEditing(activeCell, '');
+                    }
+                    break;
+                case 'Escape':
+                    if (isEditing) {
+                        e.preventDefault();
+                        cancelEditing();
                     }
                     break;
                 case 'Delete':
@@ -1030,6 +1059,130 @@
             }
         }
 
+        // Direct cell editing
+        function startDirectEditing(cell, initialChar = '') {
+            if (isEditing) return;
+            
+            isEditing = true;
+            editCell = cell;
+            
+            // Create input element
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = initialChar;
+            input.style.position = 'absolute';
+            input.style.left = cell.offsetLeft + 'px';
+            input.style.top = cell.offsetTop + 'px';
+            input.style.width = cell.offsetWidth + 'px';
+            input.style.height = cell.offsetHeight + 'px';
+            input.style.border = '2px solid var(--primary)';
+            input.style.padding = '2px 4px';
+            input.style.fontSize = 'inherit';
+            input.style.fontFamily = 'inherit';
+            input.style.backgroundColor = 'white';
+            input.style.zIndex = '10';
+            
+            // Position relative to sheet wrapper
+            const wrapperRect = sheetWrapper.getBoundingClientRect();
+            const cellRect = cell.getBoundingClientRect();
+            input.style.left = (cellRect.left - wrapperRect.left + sheetWrapper.scrollLeft) + 'px';
+            input.style.top = (cellRect.top - wrapperRect.top + sheetWrapper.scrollTop) + 'px';
+            
+            sheetWrapper.appendChild(input);
+            input.focus();
+            input.select();
+            
+            // Handle input events
+            input.addEventListener('blur', finishEditing);
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    finishEditing();
+                    
+                    // Move to next cell
+                    const row = parseInt(cell.dataset.row);
+                    const col = parseInt(cell.dataset.col);
+                    if (row < rows) {
+                        navigateToCell(row + 1, col);
+                    }
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEditing();
+                }
+            });
+            
+            // Update formula input
+            formulaInput.value = initialChar;
+        }
+
+        function finishEditing() {
+            if (!isEditing || !editCell) return;
+            
+            const input = sheetWrapper.querySelector('input');
+            if (!input) return;
+            
+            const value = input.value;
+            const cellId = editCell.dataset.id;
+            
+            // Save previous value for undo
+            const prevValue = cellData[cellId] ? cellData[cellId].value : '';
+            
+            // Update cell
+            editCell.textContent = value;
+            if (!cellData[cellId]) {
+                cellData[cellId] = { value: '', formatting: {} };
+            }
+            cellData[cellId].value = value;
+            
+            // Update formula input
+            formulaInput.value = value;
+            
+            // Save to undo stack if value changed
+            if (prevValue !== value) {
+                saveToUndoStack({
+                    type: 'cellEdit',
+                    cellId,
+                    prevValue,
+                    newValue: value
+                });
+            }
+            
+            // Clean up
+            sheetWrapper.removeChild(input);
+            isEditing = false;
+            editCell = null;
+            
+            updateStatusBar();
+        }
+
+        function cancelEditing() {
+            if (!isEditing || !editCell) return;
+            
+            const input = sheetWrapper.querySelector('input');
+            if (!input) return;
+            
+            // Restore original value in formula input
+            const cellId = editCell.dataset.id;
+            if (cellData[cellId]) {
+                formulaInput.value = cellData[cellId].value || '';
+            } else {
+                formulaInput.value = editCell.textContent || '';
+            }
+            
+            // Clean up
+            sheetWrapper.removeChild(input);
+            isEditing = false;
+            editCell = null;
+        }
+
+        function handleDoubleClick(e) {
+            const cell = e.target.closest('td');
+            if (!cell) return;
+            
+            setActiveCell(cell);
+            startDirectEditing(cell, cell.textContent);
+        }
+
         function navigateToCell(row, col) {
             const cell = document.querySelector(`td[data-row="${row}"][data-col="${col}"]`);
             if (cell) {
@@ -1048,7 +1201,7 @@
 
         // Formula handling
         function handleFormulaInput() {
-            if (activeCell) {
+            if (activeCell && !isEditing) {
                 activeCell.textContent = formulaInput.value;
                 
                 const cellId = activeCell.dataset.id;
@@ -1061,7 +1214,7 @@
 
         function handleFormulaBlur() {
             // Save to undo stack when formula input loses focus
-            if (activeCell) {
+            if (activeCell && !isEditing) {
                 const cellId = activeCell.dataset.id;
                 const prevValue = cellData[cellId] ? cellData[cellId].value : '';
                 const newValue = formulaInput.value;
@@ -1614,6 +1767,12 @@
                 
                 formulaInput.value = '';
                 activeCellRef.textContent = 'A1';
+                
+                // Set initial active cell
+                const initialCell = document.querySelector('td[data-row="1"][data-col="1"]');
+                if (initialCell) {
+                    setActiveCell(initialCell);
+                }
             }
         }
 
@@ -1656,6 +1815,12 @@
                     
                     buildTable();
                     updateStatusBar();
+                    
+                    // Set initial active cell
+                    const initialCell = document.querySelector('td[data-row="1"][data-col="1"]');
+                    if (initialCell) {
+                        setActiveCell(initialCell);
+                    }
                     
                     alert('File imported successfully!');
                 } catch (error) {
