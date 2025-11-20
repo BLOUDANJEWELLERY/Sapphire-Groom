@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MiniSheet — Lightweight Spreadsheet</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- SheetJS (xlsx) -->
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0f1724; --panel:#0b1220; --muted:#9aa4b2; --accent:#efb557;
+      --card:#0e1622; --glass: rgba(255,255,255,0.03);
+    }
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+    body{background:linear-gradient(180deg,#071124 0%, #061425 100%); color:#dfe7ee; display:flex; align-items:flex-start; justify-content:center; padding:28px;}
+    .app{width:1100px; max-width:calc(100% - 40px);}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    h1{font-size:18px;margin:0;color:var(--accent)}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    button,input[type=file]{background:var(--panel);border:1px solid rgba(255,255,255,0.04);padding:8px 10px;border-radius:8px;color:inherit;cursor:pointer}
+    button:hover{transform:translateY(-1px)}
+    .toolbar{background:var(--card);padding:12px;border-radius:12px;border:1px solid rgba(255,255,255,0.03);display:flex;align-items:center;gap:12px;margin-bottom:12px}
+    .sheet-wrap{background:var(--glass);padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.02);overflow:auto;max-height:68vh}
+    table.sheet{border-collapse:collapse; width:100%;}
+    table.sheet th, table.sheet td{border:1px solid rgba(255,255,255,0.03);padding:6px 8px; min-width:80px; max-width:350px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    table.sheet th{background:linear-gradient(90deg, rgba(255,255,255,0.02), transparent); color:var(--muted); font-weight:600; text-align:left; position:sticky; top:0; z-index:3;}
+    .row-header{background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent); color:var(--muted); width:44px; text-align:center; font-weight:600; position:sticky; left:0; z-index:2;}
+    td[contenteditable="true"]{background:transparent; outline:none;}
+    .small{font-size:13px;color:var(--muted)}
+    .status{margin-left:8px;color:var(--muted);font-size:13px}
+    .btn-danger{background:#5a1f1f}
+    .file-input{display:none}
+    .flex{display:flex;gap:8px;align-items:center}
+    .actions{display:flex; gap:8px; align-items:center}
+    @media (max-width:900px){ .app{width:100%} table.sheet th, table.sheet td{min-width:72px} }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>MiniSheet — quick spreadsheet</h1>
+      <div class="controls small">
+        <span class="small">Captain — build & test</span>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <div class="actions">
+        <button id="newBtn">New</button>
+        <button id="addRowBtn">+ Row</button>
+        <button id="addColBtn">+ Col</button>
+        <button id="delRowBtn">Del Row</button>
+        <button id="delColBtn">Del Col</button>
+      </div>
+
+      <div style="flex:1"></div>
+
+      <div class="flex">
+        <label class="small">Project name</label>
+        <input id="projectName" placeholder="untitled" style="padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit" />
+        <button id="saveBtn">Save</button>
+        <button id="loadBtn">Load</button>
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" class="file-input" />
+        <button id="importBtn">Import</button>
+        <button id="exportXlsxBtn">Export .xlsx</button>
+        <button id="exportCsvBtn">Export .csv</button>
+      </div>
+    </div>
+
+    <div class="sheet-wrap" id="sheetWrap">
+      <!-- table inserted here -->
+    </div>
+
+    <div style="margin-top:10px" class="small">
+      Autosave is enabled (localStorage). Exports use SheetJS. Open devtools for debugging.
+    </div>
+  </div>
+
+<script>
+/*
+  MiniSheet v1 - client-only spreadsheet
+  - editable grid using contenteditable TDs
+  - import/export with SheetJS (xlsx)
+  - autosave to localStorage
+*/
+
+const DEFAULT_ROWS = 20;
+const DEFAULT_COLS = 12;
+
+let rows = DEFAULT_ROWS;
+let cols = DEFAULT_COLS;
+
+const sheetWrap = document.getElementById('sheetWrap');
+const projectNameInput = document.getElementById('projectName');
+
+function colLetter(n){
+  let s = '';
+  while(n > 0){
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function buildTable(r = rows, c = cols, data = []){
+  rows = r; cols = c;
+  const table = document.createElement('table');
+  table.className = 'sheet';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+
+  // top-left corner blank
+  const corner = document.createElement('th');
+  corner.style.position = 'sticky';
+  corner.style.left = '0';
+  corner.style.zIndex = 4;
+  corner.style.background = 'var(--card)';
+  corner.innerHTML = '';
+  headRow.appendChild(corner);
+
+  for(let j=1;j<=cols;j++){
+    const th = document.createElement('th');
+    th.textContent = colLetter(j);
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+
+  for(let i=1;i<=rows;i++){
+    const tr = document.createElement('tr');
+
+    const rowHeader = document.createElement('th');
+    rowHeader.className = 'row-header';
+    rowHeader.textContent = i;
+    tr.appendChild(rowHeader);
+
+    for(let j=1;j<=cols;j++){
+      const td = document.createElement('td');
+      td.contentEditable = 'true';
+      td.dataset.r = i-1; td.dataset.c = j-1;
+      // fill from data if present (data as array of arrays)
+      if(data && data[i-1] && typeof data[i-1][j-1] !== 'undefined'){
+        const v = data[i-1][j-1];
+        td.textContent = (v===null||v===undefined)?'':v;
+      }
+      // keyboard handling: Enter => newline allowed; Tab moves cell right
+      td.addEventListener('keydown', (ev)=>{
+        if(ev.key === 'Tab'){ ev.preventDefault(); moveFocus(td, 'right'); }
+        if(ev.key === 'Enter'){ ev.preventDefault(); /* allow newline if shift? */ if(!ev.shiftKey) moveFocus(td, 'down'); else { document.execCommand('insertLineBreak'); } }
+      });
+      td.addEventListener('input', autosaveDebounced);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  sheetWrap.innerHTML = '';
+  sheetWrap.appendChild(table);
+
+  // click to focus convenience
+  sheetWrap.querySelectorAll('td[contenteditable="true"]').forEach(td=>{
+    td.addEventListener('focus', ()=> td.classList.add('focused'));
+    td.addEventListener('blur', ()=> td.classList.remove('focused'));
+  });
+}
+
+function getGridData(){
+  const table = sheetWrap.querySelector('table.sheet');
+  if(!table) return [];
+  const data = [];
+  for(const tr of table.tBodies[0].rows){
+    const row = [];
+    for(const td of tr.cells){
+      if(td.tagName === 'TH') continue;
+      row.push(td.textContent);
+    }
+    data.push(row);
+  }
+  return data;
+}
+
+function setGridData(arr){
+  const r = arr.length || DEFAULT_ROWS;
+  const c = Math.max(DEFAULT_COLS, ...arr.map(row=>row.length));
+  buildTable(r, c, arr);
+}
+
+function autosave(){
+  const key = storageKey();
+  const payload = {
+    name: projectNameInput.value || 'untitled',
+    rows, cols,
+    data: getGridData(),
+    savedAt: new Date().toISOString()
+  };
+  localStorage.setItem(key, JSON.stringify(payload));
+  setStatus('Saved ' + new Date().toLocaleTimeString());
+}
+let autosaveTimer = null;
+function autosaveDebounced(){
+  if(autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(autosave, 800);
+}
+
+function storageKey(){
+  const nm = (projectNameInput.value || 'untitled').trim();
+  return 'minisheet:' + nm;
+}
+
+function loadFromStorage(){
+  const key = storageKey();
+  const raw = localStorage.getItem(key);
+  if(!raw) { setStatus('No local save for this project'); return false; }
+  try{
+    const obj = JSON.parse(raw);
+    setGridData(obj.data || []);
+    setStatus('Loaded local "' + obj.name + '" (' + (obj.savedAt ? new Date(obj.savedAt).toLocaleString() : 'unknown') + ')');
+    return true;
+  }catch(e){ console.error(e); setStatus('Failed to load'); return false; }
+}
+
+function clearSheet(){
+  projectNameInput.value = projectNameInput.value || 'untitled';
+  setGridData([], DEFAULT_ROWS, DEFAULT_COLS);
+  autosave();
+  setStatus('New sheet created');
+}
+
+function moveFocus(currentTd, dir){
+  const r = parseInt(currentTd.dataset.r), c = parseInt(currentTd.dataset.c);
+  let nr=r, nc=c;
+  if(dir==='right') nc = Math.min(cols-1, c+1);
+  if(dir==='left') nc = Math.max(0, c-1);
+  if(dir==='down') nr = Math.min(rows-1, r+1);
+  if(dir==='up') nr = Math.max(0, r-1);
+  const table = sheetWrap.querySelector('table.sheet');
+  if(!table) return;
+  const target = table.tBodies[0].rows[nr].cells[nc];
+  if(target) { target.focus(); selectElementContents(target); }
+}
+
+function selectElementContents(el) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function addRow(){
+  rows += 1;
+  const table = sheetWrap.querySelector('table.sheet');
+  if(!table) return;
+  const tr = document.createElement('tr');
+  const rowHeader = document.createElement('th');
+  rowHeader.className = 'row-header';
+  rowHeader.textContent = rows;
+  tr.appendChild(rowHeader);
+  for(let j=0;j<cols;j++){
+    const td = document.createElement('td');
+    td.contentEditable='true';
+    td.dataset.r = rows-1; td.dataset.c = j;
+    td.addEventListener('keydown', (ev)=>{
+      if(ev.key === 'Tab'){ ev.preventDefault(); moveFocus(td, 'right'); }
+      if(ev.key === 'Enter'){ ev.preventDefault(); if(!ev.shiftKey) moveFocus(td, 'down'); else { document.execCommand('insertLineBreak'); } }
+    });
+    td.addEventListener('input', autosaveDebounced);
+    tr.appendChild(td);
+  }
+  table.tBodies[0].appendChild(tr);
+  autosaveDebounced();
+}
+
+function addCol(){
+  cols += 1;
+  const table = sheetWrap.querySelector('table.sheet');
+  if(!table) return;
+  // update header
+  const head = table.querySelector('thead tr');
+  const th = document.createElement('th');
+  th.textContent = colLetter(cols);
+  head.appendChild(th);
+  // add cell to each row
+  for(let i=0;i<table.tBodies[0].rows.length;i++){
+    const tr = table.tBodies[0].rows[i];
+    const td = document.createElement('td');
+    td.contentEditable='true';
+    td.dataset.r = i; td.dataset.c = cols-1;
+    td.addEventListener('keydown', (ev)=>{
+      if(ev.key === 'Tab'){ ev.preventDefault(); moveFocus(td, 'right'); }
+      if(ev.key === 'Enter'){ ev.preventDefault(); if(!ev.shiftKey) moveFocus(td, 'down'); else { document.execCommand('insertLineBreak'); } }
+    });
+    td.addEventListener('input', autosaveDebounced);
+    tr.appendChild(td);
+  }
+  autosaveDebounced();
+}
+
+function delRow(){
+  const table = sheetWrap.querySelector('table.sheet');
+  if(!table) return;
+  if(table.tBodies[0].rows.length <= 1) return;
+  table.tBodies[0].deleteRow(-1);
+  rows = table.tBodies[0].rows.length;
+  // update row headers
+  for(let i=0;i<rows;i++){
+    table.tBodies[0].rows[i].cells[0].textContent = i+1;
+    for(let j=1;j<table.tBodies[0].rows[i].cells.length;j++){
+      table.tBodies[0].rows[i].cells[j].dataset.r = i;
+    }
+  }
+  autosaveDebounced();
+}
+
+function delCol(){
+  const table = sheetWrap.querySelector('table.sheet');
+  if(!table) return;
+  if(table.tHead.rows[0].cells.length <= 2) return; // keep at least 1 col
+  // remove header last
+  table.tHead.rows[0].deleteCell(-1);
+  // remove each row's last cell
+  for(const tr of table.tBodies[0].rows){
+    tr.deleteCell(-1);
+  }
+  cols = table.tHead.rows[0].cells.length - 1;
+  autosaveDebounced();
+}
+
+function setStatus(msg){
+  // simple visual hint: update doc.title briefly
+  document.title = msg + ' — MiniSheet';
+  // also small console log
+  console.log('[MiniSheet]', msg);
+}
+
+/* Import handling (xlsx or csv) */
+const fileInput = document.getElementById('fileInput');
+document.getElementById('importBtn').addEventListener('click', ()=> fileInput.click());
+fileInput.addEventListener('change', handleFile, false);
+
+function handleFile(evt){
+  const file = evt.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    const data = e.target.result;
+    let workbook;
+    try{
+      // read binary string or arraybuffer
+      workbook = XLSX.read(data, {type: 'array'});
+    }catch(err){
+      try{ workbook = XLSX.read(data, {type: 'binary'}); } catch(e){ console.error(e); alert('Failed to read file'); return; }
+    }
+    const firstName = workbook.SheetNames[0];
+    const ws = workbook.Sheets[firstName];
+    const arr = XLSX.utils.sheet_to_json(ws, {header:1, raw:false});
+    projectNameInput.value = file.name.replace(/\.(xlsx|xls|csv)$/i,'');
+    setGridData(arr);
+    autosave();
+    setStatus('Imported ' + file.name);
+  };
+  reader.readAsArrayBuffer(file);
+  // reset
+  evt.target.value = '';
+}
+
+/* Export XLSX using SheetJS */
+document.getElementById('exportXlsxBtn').addEventListener('click', ()=>{
+  const data = getGridData();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  const filename = (projectNameInput.value || 'minisheet') + '.xlsx';
+  XLSX.writeFile(wb, filename);
+  setStatus('Exported ' + filename);
+});
+
+/* Export CSV */
+document.getElementById('exportCsvBtn').addEventListener('click', ()=>{
+  const data = getGridData();
+  const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(data));
+  const filename = (projectNameInput.value || 'minisheet') + '.csv';
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  setStatus('Exported ' + filename);
+});
+
+/* Buttons */
+document.getElementById('newBtn').addEventListener('click', ()=> { projectNameInput.value = 'untitled'; buildTable(DEFAULT_ROWS, DEFAULT_COLS, []); autosave(); });
+document.getElementById('addRowBtn').addEventListener('click', addRow);
+document.getElementById('addColBtn').addEventListener('click', addCol);
+document.getElementById('delRowBtn').addEventListener('click', delRow);
+document.getElementById('delColBtn').addEventListener('click', delCol);
+document.getElementById('saveBtn').addEventListener('click', ()=> { autosave(); setStatus('Saved manually'); });
+document.getElementById('loadBtn').addEventListener('click', ()=> { loadFromStorage(); });
+
+/* Init */
+(function init(){
+  // try load last autosave (untitled)
+  if(localStorage.getItem('minisheet:untitled')){
+    try{ const raw = JSON.parse(localStorage.getItem('minisheet:untitled')); projectNameInput.value = raw.name || 'untitled'; setGridData(raw.data || []); setStatus('Loaded autosave'); return; }catch(e){}
+  }
+  buildTable(DEFAULT_ROWS, DEFAULT_COLS, []);
+  setStatus('Ready');
+})();
+</script>
+</body>
+</html>
